@@ -53,10 +53,6 @@ RESET:
 	STA $2005 ;why twice?
 	STA $2005
 
-vblankwait1:       ; First wait for vblank to make sure PPU is ready
-  BIT $2002
-  BPL vblankwait1
-
 clrmem:
   LDA #$00
   STA $0000, x
@@ -70,18 +66,13 @@ clrmem:
   STA $0300, x
   INX
   BNE clrmem
-   
-vblankwait2:      ; Second wait for vblank, PPU is ready after this
-  BIT $2002
-  BPL vblankwait2
-
-
-;;  LDA #%10000000   ;intensify blues
-;;  STA $2001
-  
-	jsr LoadPalettes
+ 
 	jsr InitBoard
-
+    jsr CountNeighbors
+	jsr AddAndRemoveOrganisms
+	jsr CountNeighbors
+	jsr AddAndRemoveOrganisms
+	
 	;test code to see if slicing up the drawing works
 	ldx #0
 	stx counter
@@ -91,6 +82,23 @@ lp1:
 	lda counter
 	cmp #15
 	bne lp1	 
+
+vblankwait1:       ; First wait for vblank to make sure PPU is ready
+  BIT $2002
+  BPL vblankwait1
+
+
+ 
+vblankwait2:      ; Second wait for vblank, PPU is ready after this
+  BIT $2002
+  BPL vblankwait2
+
+
+;;  LDA #%10000000   ;intensify blues
+;;  STA $2001
+  
+	jsr LoadPalettes
+	
 
 	lda #0
 	sta counter
@@ -104,8 +112,10 @@ lp1:
 	sta PPUHi
 	lda #$0
 	sta PPULo
-;	jsr WriteBoardToPPU
  
+
+
+;test worked 
 	lda #0
 	sta counter2
 lp1a: 
@@ -125,13 +135,21 @@ lp1a:
 	STA $2001
   
 Forever:
-	;lda counter
-	;disable PPU
-	;re-enable PPU
- ; jsr CountNeighbors
-  ;jsr AddAndRemoveOrganisms	
-
-  JMP Forever     ;jump back to Forever, infinite loop
+	lda #0
+;	jsr CountNeighbors
+;	jsr AddAndRemoveOrganisms
+	
+;	;test code to see if slicing up the drawing works
+	ldx #0
+	stx counter2
+lp1b: 
+	jsr DrawBoardRowToRAM
+	inc counter2
+	lda counter2
+	cmp #30
+	bne lp1b	 
+	
+	JMP Forever     ;jump back to Forever, infinite loop
 
 InitBoard
 	ldy #0
@@ -142,12 +160,27 @@ lpx:
 	iny 
 	bne lpx
 
+	;blinker
 	lda #1
-	sta board
-	ldy #16
+;	ldy #17
+;	sta board,y
+;	ldy #33
+;	sta board,y
+;	ldy #49
+;	sta board,y
+	
+	;glider
+	ldy #120
+	sta board,y	
+	ldy #136
 	sta board,y
-	ldy #239
+	ldy #152
 	sta board,y
+	ldy #151
+	sta board,y
+	ldy #134
+	sta board,y
+
 	
 	lda #HIGH(tileRam)
 	sta pointerHi
@@ -347,17 +380,17 @@ xt:	rts
 
 ;update board
 CountNeighbors
-	lda #223
+	lda #239
 	sta upLeftOffset
-	lda #224
+	lda #240
 	sta upOffset
-	lda #225
+	lda #241
 	sta upRightOffset 
-	lda #15
+	lda #255
 	sta leftOffset
 	lda #1
 	sta rightOffset
-	lda #31
+	lda #15
 	sta downLeftOffset
 	lda #16
 	sta downOffset
@@ -393,7 +426,10 @@ updLp:
 	inc upLeftOffset
 	inc upOffset
 	inc upRightOffset
+	
 	inc leftOffset
+	inc rightOffset
+	
 	inc downLeftOffset
 	inc downOffset
 	inc downRightOffset
@@ -403,25 +439,33 @@ updLp:
 	
 	rts
 
-;
+;removes or adds ccells to the board
 AddAndRemoveOrganisms
 	ldx #0
 updLpA:
 	;is the cell occupied
 	lda board,x
 	bne CheckLives
+	;cell is empty
 	lda neighborCounts,x ; does it spawn a new life form
 	cmp #3
 	bne x2
 	lda #1
 	sta board,x ; put an organism there
 	jmp x2
-CheckLives:
-	cmp #3  ; lt
-	bcc killIt
-	cmp #4  
-	bcs killIt ; gte
-	jmp x2
+CheckLives: ; sad or overcrowded
+	lda neighborCounts,x ; does it spawn a new life form
+	cmp #0  ; lt
+	beq killIt
+	cmp #1
+	beq killIt ; lt
+	cmp #2
+	beq x2
+	cmp #3
+	beq x2
+;	cmp #4  
+;	bcs killIt ; gte
+;	jmp x2
 killIt:
 	lda #0
 	sta board,x
@@ -435,9 +479,23 @@ palette:
   .db $22,$1C,$15,$14,  $22,$02,$38,$3C,  $22,$1C,$15,$14,  $22,$02,$38,$3C   ;;sprite palette
 
 NMI:
-  ;jsr WriteBoardToPPU
+;  lda counter
+ ; cmp #30
+ ; beq nmix
+ ; jsr WriteBoardToPPU
+;nmix:  
+  LDA #$00        ;;tell the ppu there is no background scrolling
+  STA $2005
+  STA $2005
   rti
- 
+
+;;;;;;;;;;;;;;
+;; How the NMI's worked
+;;Count Neighbors
+;;AddRemove
+;; ??? frames to copy board to ram
+;; copy RAM to PPPU
+;; (repeat) 
 ;;;;;;;;;;;;;;  
   
   
