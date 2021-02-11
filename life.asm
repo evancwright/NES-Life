@@ -79,17 +79,13 @@ clrmem:
   INX
   BNE clrmem
  
-	jsr InitBoard
-    jsr CountNeighbors
-	jsr AddAndRemoveOrganisms
-	jsr CountNeighbors
-	jsr AddAndRemoveOrganisms
+	jsr InitBoard 
 	
 	;test code to see if slicing up the drawing works
 	ldx #0
 	stx counter
 
-	jsr DrawWholeBoard
+	jsr CopyBoardToTileMap
 	
 	lda #0
 	sta counter	
@@ -114,31 +110,7 @@ vblankwait2:      ; Second wait for vblank, PPU is ready after this
 ;;  STA $2001
   
 	jsr LoadPalettes
-	
- 
-;	lda #HIGH(tileRam)
-;	sta pointerHi
-;	lda #LOW(tileRam)
-;	sta pointerLo
-
-;	lda #$20
-;	sta PPUHi
-;	lda #$0
-;	sta PPULo
- 
-
-
-;test worked 
-;	lda #0
-;	sta counter2
-;lp1a: 
-;	jsr WriteBoardToPPU ; writes 32 tile
-;	inc counter2
-;	lda counter2
-;	cmp #30
-;	bne lp1a	
-
- 
+	 
  
 	LDA #%10010000   ; enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
 	STA $2000
@@ -155,28 +127,7 @@ Forever:
 	lda #0
 	jsr CountNeighbors
 	jsr AddAndRemoveOrganisms
-	
-	;build nametable copy in RAM
-
-	lda #HIGH(board)
-	sta boardPtrHi
-	lda #LOW(board)
-	sta boardPtrLo
-
-	lda #HIGH(tileRam)
-	sta pointerHi
-	lda #LOW(tileRam)
-	sta pointerLo
-	
-	;build picture of world in RAM tilemap
-	ldx #0
-	stx counter2
-lp1b: 
-	jsr DrawBoardRowToRAM
-	inc counter2
-	lda counter2
-	cmp #15
-	bne lp1b	 
+	jsr CopyBoardToTileMap
 	
 	;ready to copy name table to PPU
 	
@@ -194,7 +145,8 @@ lp1b:
 	sta PPUHi
 	lda #$00
 	sta PPULo
-
+ 
+  
 	lda #1
 	sta drawing
 	JMP Forever     ;jump back to Forever, infinite loop
@@ -276,8 +228,28 @@ LoadPalettesLoop:
 SetAttrTable
 	rts
   
-  
+;copies the board into the tilemap in ram
+CopyBoardToTileMap
 
+	lda #HIGH(board)
+	sta boardPtrHi
+	lda #LOW(board)
+	sta boardPtrLo
+
+	lda #HIGH(tileRam)
+	sta pointerHi
+	lda #LOW(tileRam)
+	sta pointerLo
+	 
+	ldx #0
+	stx counter2
+.lp1b 
+	jsr DrawBoardRowToRAM
+	inc counter2
+	lda counter2
+	cmp #15
+	bne .lp1b	 
+	rts
 
 ;Draw board (draws 32 tiles)
 ;Upates the name to reflect what is in the board
@@ -413,26 +385,10 @@ d2:
 	lda pointerHi
 	adc #0
 	sta pointerHi
-	;inc line counter
-;;	inc counter
-;;	lda counter
- ;;   cmp #15
- ;;   bne xt	
+ 	
 xt:	rts 
 
-;
-DrawWholeBoard
-	lda #0
-	sta counter
-.lp1 
-	jsr DrawBoardRowToRAM
-	inc counter
-	lda counter
-	cmp #15
-	bne .lp1	 
-	lda #0
-	sta counter
-	rts
+ 
 
 ;update board
 CountNeighbors
@@ -535,6 +491,12 @@ palette:
   .db $22,$1C,$15,$14,  $22,$02,$38,$3C,  $22,$1C,$15,$14,  $22,$02,$38,$3C   ;;sprite palette
 
 NMI:
+	pha
+	txa
+	pha
+	tya
+	pha
+
    lda drawing
    beq .x
 ;  lda counter
@@ -546,6 +508,12 @@ NMI:
   LDA #$00        ;;tell the ppu there is no background scrolling
   STA $2005
   STA $2005
+  
+  pla 
+  tay
+  pla 
+  tax
+  pla
   rti
 
 ;;;;;;;;;;;;;;
