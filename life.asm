@@ -1,16 +1,10 @@
-
-board equ $200 ; 256 squares
-neighborCounts equ $300
-;upLeftOffset equ $400
-;upOffset equ $401
-;upRightOffset equ $402
-;leftOffset equ $403
-;rightOffset equ $404
-;downLeftOffset equ $405
-;downOffset equ $406
-;downRightOffset equ $407
-;counter equ $408
-tileRam equ $409 ; 960 bytes  $409- $7c9
+OCCUPIED equ $80 
+OAM_ADDR equ $2003
+OAM_DATA equ $2004
+CURSOR_SPR equ 6
+board equ $200 ; 256 squares (1/4K)
+;neighborCounts equ $300 (1/4K)
+tileRam equ $409 ; 960 bytes  $409- $7c9  (1K)
 
  
 ;;;;;;;;;;;;;;;
@@ -43,6 +37,7 @@ downLeftOffset .rs 1
 downOffset .rs 1
 downRightOffset .rs 1
 counter .rs 1
+ncount .rs 1 ; neighbor count - temp variable
 
   .bank 0
   .org $C000 
@@ -110,13 +105,14 @@ vblankwait2:      ; Second wait for vblank, PPU is ready after this
 ;;  STA $2001
   
 	jsr LoadPalettes
-	 
+	jsr InitSprites ;hide all except 1
+	
  
 	LDA #%10010000   ; enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
 	STA $2000
 
-;	LDA #%00011110   ; enable sprites, enable background, no clipping on left side
-	LDA #%00001110   ; disable sprites, enable background, no clipping on left side
+	LDA #%00011110   ; enable sprites, enable background, no clipping on left side
+;	LDA #%00001110   ; disable sprites, enable background, no clipping on left side
 	STA $2001
   
 Forever:
@@ -162,7 +158,7 @@ lpx:
 	bne lpx
 
 	;blinker
-	lda #1
+	lda #OCCUPIED
 ;	ldy #17
 ;	sta board,y
 ;	ldy #33
@@ -311,7 +307,7 @@ DrawBoardRowToRAM
 drawLp1:
 	ldy tempY1
 	lda [boardPtrLo],y
-	beq empty1
+	bpl empty1
 	iny
 	sty tempY1
 	ldy tempY2
@@ -344,7 +340,7 @@ d1:
 drawLp2:
 	ldy tempY1
 	lda [boardPtrLo],y
-	beq empty2
+	bpl empty2
 	iny
 	sty tempY1
 	ldy tempY2
@@ -410,31 +406,55 @@ CountNeighbors
 	sta downRightOffset
 	ldx #0
 updLp:
-	clc
 	lda #0
-	
+	sta ncount
 	ldy upLeftOffset
-	adc board,y
+	lda board,y
+	bpl .skip1
+	inc ncount
+.skip1
 	ldy upOffset
-	adc board,y
+	lda board,y
+	bpl .skip2
+	inc ncount
+.skip2	
 	ldy upRightOffset
-	adc board,y
-
+	lda board,y
+	bpl .skip3
+	inc ncount
+.skip3	
 	ldy leftOffset
-	adc board,y
+	lda board,y
+	bpl .skip4
+	inc ncount
+.skip4	
 	ldy rightOffset
-	adc board,y
-
+	lda board,y
+	bpl .skip5
+	inc ncount
+.skip5
 	ldy downLeftOffset
-	adc board,y
+	lda board,y
+	bpl .skip6
+	inc ncount
+.skip6
 	ldy downOffset
-	adc board,y
+	lda board,y
+	bpl .skip7
+	inc ncount
+.skip7
 	ldy downRightOffset
-	adc board,y
+	lda board,y
+	bpl .skip8
+	inc ncount
+.skip8
+	;OR the neighbor count onto the lower 4 bits
+	lda board,x
+	and #$F0 ; clear count
+	ora ncount
+	sta board,x
 	
-	sta neighborCounts,x
-
-	
+	;update offsets to neighbors
 	inc upLeftOffset
 	inc upOffset
 	inc upRightOffset
@@ -446,9 +466,11 @@ updLp:
 	inc downOffset
 	inc downRightOffset
 	
+	;update loop counter
 	inx
-	bne updLp
-	
+	beq .x
+	jmp updLp
+.x	
 	rts
 
 ;removes or adds ccells to the board
@@ -457,16 +479,19 @@ AddAndRemoveOrganisms
 .updLpA
 	;is the cell occupied
 	lda board,x
-	bne .CheckLives
+	bmi .CheckLives
 	;cell is empty
-	lda neighborCounts,x ; does it spawn a new life form
+	lda board,x ; does it spawn a new life form
+	and #$0F ; clear life bit
 	cmp #3
 	bne .x2
-	lda #1
+	lda board,x
+	ora #OCCUPIED
 	sta board,x ; put an organism there
 	jmp .x2
 .CheckLives ; sad or overcrowded
-	lda neighborCounts,x ; does it spawn a new life form
+	lda board,x ; does it spawn a new life form
+	and #$0F ; clear life bit 
 	cmp #0  ; lt
 	beq .killIt
 	cmp #1
@@ -481,9 +506,63 @@ AddAndRemoveOrganisms
 .killIt
 	lda #0
 	sta board,x
+	and #$7F  ; 01111111 ; clear organism
+	sta board,x
 .x2
 	inx
 	bne .updLpA
+	rts
+
+;hides all sprites except sprite 0 (the cursor)
+InitSprites
+.vblankwait2      ; Second wait for vblank, PPU is ready after this
+	BIT $2002
+	BPL .vblankwait2
+
+	
+	LDA $2002  ; read PPU status to reset the high/low latch
+
+	lda #0  ; spr0 y
+	sta OAM_ADDR ;write the OAM address
+	lda #124  
+	sta OAM_DATA ;write the data to the OAM	
+	sta OAM_DATA ;write the data to the OAM	
+	sta OAM_DATA ;write the data to the OAM	
+	sta OAM_DATA ;write the data to the OAM	
+
+	LDA $2002  ; read PPU status to reset the high/low latch
+	lda #1  ; spr0's  tile
+	sta OAM_ADDR ;write the OAM address
+	lda #CURSOR_SPR
+	sta OAM_DATA ;write the data to the OAM	
+	
+	LDA $2002  ; read PPU status to reset the high/low latch
+	lda #3  ;spr0 x
+	sta OAM_ADDR ;write the OAM address	 
+	lda #124
+	sta OAM_DATA  ;write the data to the OAM
+	
+	;now hide all the other sprites
+	lda #3 ;y coord of 2nd sprite
+	ldy #248
+	ldx #0
+.lp
+	; doesn't help LDX $2002  ; read PPU status to reset the high/low latch
+	;write the OAM address
+	sta OAM_ADDR
+	;write the data to the OAM
+	sta OAM_DATA 
+	;add 4 to addr
+	clc
+	adc #4
+	bcc .lp ; if we didn't roll-over, keep looping
+	rts
+
+MoveRight
+;	lda cursorX
+;	and $F0
+;	sta  ; write sprite x to OEM memory
+		
 	rts
 
 palette:
