@@ -45,6 +45,7 @@ cursorX .rs 1
 cursorY .rs 1
 sqY .rs 1
 runSim .rs 1
+btnCounter .rs 1 ; delay before checking button again
 
   .bank 0
   .org $C000 
@@ -573,6 +574,11 @@ NMI:
 	sta $4014       ; set the high byte (02) of the RAM address, start the transfer
 
 
+	lda btnCounter
+	beq .btnDone
+	dec btnCounter
+.btnDone
+
  	;read controller
 	;tell it to latch
 	lda #$01
@@ -585,6 +591,10 @@ NMI:
 	and #%00000001  ; only look at bit 0
 	beq .readADone   ; branch to ReadADone if button is NOT pressed (0)
 	;toggle life form at (cursorY*16 + cursorX)
+	lda btnCounter
+	bne .readADone
+	lda #30
+	sta btnCounter
 	;set board ptr
 	lda #HIGH(board)
 	sta boardPtrHi
