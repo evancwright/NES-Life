@@ -1,8 +1,11 @@
 OCCUPIED equ $80 
 OAM_ADDR equ $2003
 OAM_DATA equ $2004
+P1_CONTROLLER equ $4016
+
 CURSOR_SPR equ 6
-board equ $200 ; 256 squares (1/4K)
+sprites equ $200
+board equ $300 ; 256 squares (1/4K)
 ;neighborCounts equ $300 (1/4K)
 tileRam equ $409 ; 960 bytes  $409- $7c9  (1K)
 
@@ -38,6 +41,10 @@ downOffset .rs 1
 downRightOffset .rs 1
 counter .rs 1
 ncount .rs 1 ; neighbor count - temp variable
+cursorX .rs 1
+cursorY .rs 1
+sqY .rs 1
+runSim .rs 1
 
   .bank 0
   .org $C000 
@@ -84,7 +91,8 @@ clrmem:
 	
 	lda #0
 	sta counter	
-
+	sta runSim
+	
 ;test worked 
 	lda #0
 	sta counter2
@@ -120,9 +128,11 @@ Forever:
 	lda drawing  ; wait for NMI to set draw back to 0
 	bne Forever
 
-	lda #0
+	lda runSim
+	beq .dontRun
 	jsr CountNeighbors
 	jsr AddAndRemoveOrganisms
+.dontRun	
 	jsr CopyBoardToTileMap
 	
 	;ready to copy name table to PPU
@@ -515,55 +525,38 @@ AddAndRemoveOrganisms
 
 ;hides all sprites except sprite 0 (the cursor)
 InitSprites
-.vblankwait2      ; Second wait for vblank, PPU is ready after this
-	BIT $2002
-	BPL .vblankwait2
+ 	 
+	ldy #0  ; spr0 y
+	lda #4  
+	sta sprites,y
 
-	
-	LDA $2002  ; read PPU status to reset the high/low latch
+	iny
+	lda #6
+	sta sprites,y
 
-	lda #0  ; spr0 y
-	sta OAM_ADDR ;write the OAM address
-	lda #124  
-	sta OAM_DATA ;write the data to the OAM	
-	sta OAM_DATA ;write the data to the OAM	
-	sta OAM_DATA ;write the data to the OAM	
-	sta OAM_DATA ;write the data to the OAM	
-
-	LDA $2002  ; read PPU status to reset the high/low latch
-	lda #1  ; spr0's  tile
-	sta OAM_ADDR ;write the OAM address
-	lda #CURSOR_SPR
-	sta OAM_DATA ;write the data to the OAM	
-	
-	LDA $2002  ; read PPU status to reset the high/low latch
-	lda #3  ;spr0 x
-	sta OAM_ADDR ;write the OAM address	 
-	lda #124
-	sta OAM_DATA  ;write the data to the OAM
+	iny ;skip attrs
+	iny
+	lda #4 ; spr 
+	sta sprites,y
+	 
 	
 	;now hide all the other sprites
-	lda #3 ;y coord of 2nd sprite
-	ldy #248
-	ldx #0
-.lp
-	; doesn't help LDX $2002  ; read PPU status to reset the high/low latch
-	;write the OAM address
-	sta OAM_ADDR
-	;write the data to the OAM
-	sta OAM_DATA 
+	lda #4 ;y coord of 2nd sprite
+	ldx #248
+.lp 
+	tay
+	pha
+	txa
+	sta sprites,y 
+	pla
 	;add 4 to addr
 	clc
 	adc #4
 	bcc .lp ; if we didn't roll-over, keep looping
 	rts
 
-MoveRight
-;	lda cursorX
-;	and $F0
-;	sta  ; write sprite x to OEM memory
-		
-	rts
+ 
+ 
 
 palette:
   .db $0f,$20,$1A,$0F,  $0f,$20,$17,$0F,  $0f,$20,$21,$0F,  $0f,$20,$17,$0F   ;;background palette
@@ -574,16 +567,145 @@ NMI:
 	txa
 	pha
 	tya
+	pha  
+
+	lda #$02 ; page 200
+	sta $4014       ; set the high byte (02) of the RAM address, start the transfer
+
+
+ 	;read controller
+	;tell it to latch
+	lda #$01
+	sta P1_CONTROLLER
+	lda #$00
+	sta P1_CONTROLLER
+
+	;read buttons sequentially
+	lda P1_CONTROLLER       ; player 1 - A
+	and #%00000001  ; only look at bit 0
+	beq .readADone   ; branch to ReadADone if button is NOT pressed (0)
+	;toggle life form at (cursorY*16 + cursorX)
+	;set board ptr
+	lda #HIGH(board)
+	sta boardPtrHi
+	lda #LOW(board)
+	sta boardPtrLo
+	;load cursor coord and divide it by 16 (tile size)	
+	lda $200 ; cursorY
+	lsr A ;/16
+	lsr A
+	lsr A
+	lsr A
+	sta sqY
+	lda #0
+.multLp  ; x 16
+	cmp sqY
+	beq .out
 	pha
+	;add 16 to boardPtr
+	clc
+	lda boardPtrLo
+	adc #16
+	sta boardPtrLo
+	lda boardPtrHi
+	adc #0
+	sta boardPtrHi
+	pla
+	clc ; loop counter ++
+	adc #1
+	jmp .multLp
+.out	
+	;add cursorX to boardPtr
+	lda $203
+	lsr A	; /16
+	lsr A
+	lsr A
+	lsr A
+	tay
+	;now toggle the organism
+	lda [boardPtrLo],y
+	eor #%10000000
+	sta [boardPtrLo],y
+.readADone 
+	
+	lda P1_CONTROLLER       ; player 1 - B
+	and #%00000001  ; only look at bit 0
+	beq .readBDone
+	sta runSim
+.readBDone	
+	
+	
+	lda P1_CONTROLLER       ; player 1 - START
+	and #%00000001  ; only look at bit 0
+	beq .readStartDone
+	sta runSim
+.readStartDone
+
+
+	lda P1_CONTROLLER       ; player 1 - RESET
+	and #%00000001  ; only look at bit 0
+	beq .readSelectDone
+	jmp RESET
+.readSelectDone	
+
+
+	lda P1_CONTROLLER       ; player 1 - Up
+	and #%00000001  ; only look at bit 0
+	beq .readUpDone   ; branch to ReadADone if button is NOT pressed (0)
+				  ; add instructions here to do something when button IS pressed (1)
+	dec cursorY
+	lda cursorY
+	and #$F0
+	clc
+	adc #4
+	sta $200 ; spr0 y
+.readUpDone
+
+
+	lda P1_CONTROLLER       ; player 1 - Down
+	and #%00000001  ; only look at bit 0
+	beq .readDownDone   ; branch to ReadADone if button is NOT pressed (0)
+				  ; add instructions here to do something when button IS pressed (1)
+	inc cursorY
+	lda cursorY
+	and #$F0
+	clc
+	adc #4
+	sta $200 ; spr0 y
+.readDownDone
+ 
+ lda P1_CONTROLLER       ; player 1 - Right
+  and #%00000001  ; only look at bit 0
+  beq .readRightDone   ; branch to ReadADone if button is NOT pressed (0)
+                  ; add instructions here to do something when button IS pressed (1)
+  dec cursorX
+  lda cursorX
+  and #$F0
+  clc
+  adc #4
+  sta $203 ; spr0 x
+.readRightDone 
+
+  lda P1_CONTROLLER       ; player 1 - Left
+  and #%00000001  ; only look at bit 0
+  beq .readLeftDone   ; branch to ReadADone if button is NOT pressed (0)                 
+  inc cursorX
+  lda cursorX
+  and #$F0
+  clc
+  adc #4
+  sta $203 ; spr0 x
+.readLeftDone        ; handling this button is done
 
    lda drawing
    beq .x
+   
+
 ;  lda counter
  ; cmp #30
  ; beq nmix
  jsr WriteBoardToPPU
-;nmix:  
-.x
+.x 
   LDA #$00        ;;tell the ppu there is no background scrolling
   STA $2005
   STA $2005
@@ -595,15 +717,6 @@ NMI:
   pla
   rti
 
-;;;;;;;;;;;;;;
-;; How the NMI's worked
-;;Count Neighbors
-;;AddRemove
-;; ??? frames to copy board to ram
-;; copy RAM to PPPU
-;; (repeat) 
-;;;;;;;;;;;;;;  
-  
   
   
   .bank 1
